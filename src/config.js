@@ -1,6 +1,6 @@
 export const underlyingContractAddress = '0x4F96Fe3b7A6Cf9725f59d353F723c1bDb64CA6Aa'
 export const cTokenContractAddress = '0xF0d0EB522cfa50B716B3b1604C4F0fA6f04376AD'
-export const cETHcontractAddress = '0x41B5844f4680a8C38fBb695b7F9CFd1F64474a72'
+export const cEthAddress = '0x41B5844f4680a8C38fBb695b7F9CFd1F64474a72'
 export const abiJson = [
   {
     constant: true,
