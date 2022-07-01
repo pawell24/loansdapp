@@ -18,6 +18,8 @@ function App() {
   const [amountRedeemETH, setAmountRedeemETH] = useState('')
   const [amountBorrowERC20, setAmountBorrowERC20] = useState('')
   const [amountRepayERC20, setAmountRepayERC20] = useState('')
+  const [amountBorrowETH, setAmountBorrowETH] = useState('')
+  const [amountRepayETH, setAmountRepayETH] = useState('')
 
   const load = async () => {
     const web3 = new Web3(Web3.givenProvider || 'http://localhost:7545')
@@ -44,7 +46,7 @@ function App() {
 
   const assetName = 'DAI'
   const underlyingDecimals = 18
-  //TODO:
+
   const comptrollerAddress = '0x5eAe89DC1C671724A672ff0630122ee834098657'
   const comptroller = new web3.eth.Contract(comptrollerAbi, comptrollerAddress)
 
@@ -231,7 +233,7 @@ function App() {
     console.log(`Borrow balance is ${balance} ${assetName}`)
   }
 
-  const repayBorrow = async () => {
+  const repayBorrowERC20 = async () => {
     console.log(
       `Approving ${assetName} to be transferred from your wallet to the c${assetName} contract...`
     )
@@ -253,6 +255,79 @@ function App() {
     balance = balance / Math.pow(10, underlyingDecimals)
     console.log(`Borrow balance is ${balance} ${assetName}`)
     console.log(`Borrow repaid.\n`)
+  }
+
+  const borrowETH = async () => {
+    console.log('\nEntering market (via Comptroller contract) for ETH (as collateral)...')
+    let markets = [cTokenContractAddress] // This is the cToken contract(s) for your collateral
+    let enterMarkets = await comptroller.methods.enterMarkets(markets).send(fromMyWallet)
+
+    console.log('Calculating your liquid assets in the protocol...')
+    let { 1: liquidity } = await comptroller.methods.getAccountLiquidity(myWalletAddress).call()
+    liquidity = web3.utils.fromWei(liquidity).toString()
+
+    console.log(`Fetching the protocol's ${assetName} collateral factor...`)
+    let { 1: collateralFactor } = await comptroller.methods.markets(cTokenContractAddress).call()
+    collateralFactor = (collateralFactor / Math.pow(10, underlyingDecimals)) * 100 // Convert to percent
+
+    console.log(`Fetching ${assetName} price from the price feed...`)
+    let underlyingPriceInUsd = await priceFeed.methods.price(assetName).call()
+    underlyingPriceInUsd = underlyingPriceInUsd / 1e6 // Price feed provides price in USD with 6 decimal places
+
+    console.log('Fetching borrow rate per block for ETH borrowing...')
+    let borrowRate = await cEthContract.methods.borrowRatePerBlock().call()
+    borrowRate = borrowRate / 1e18
+
+    console.log(`\nYou have ${liquidity} of LIQUID assets (worth of USD) pooled in the protocol.`)
+    console.log(
+      `You can borrow up to ${collateralFactor}% of your TOTAL assets supplied to the protocol as ETH.`
+    )
+    console.log(`1 ${assetName} == ${underlyingPriceInUsd.toFixed(6)} USD`)
+    console.log(`You can borrow up to ${liquidity} USD worth of assets from the protocol.`)
+    console.log(
+      `NEVER borrow near the maximum amount because your account will be instantly liquidated.`
+    )
+    console.log(
+      `\nYour borrowed amount INCREASES (${borrowRate} * borrowed amount) ETH per block.\nThis is based on the current borrow rate.`
+    )
+
+    // Let's try to borrow 0.002 ETH (or another amount far below the borrow limit)
+    console.log(`\nNow attempting to borrow ${amountBorrowETH} ETH...`)
+    const borrowResult = await cEthContract.methods
+      .borrow(web3.utils.toWei(amountBorrowETH.toString(), 'ether'))
+      .send(fromMyWallet)
+
+    if (isNaN(borrowResult)) {
+      console.log(`\nETH borrow successful.\n`)
+    } else {
+      throw new Error(
+        `See https://compound.finance/docs/ctokens#ctoken-error-codes\n` + `Code: ${borrowResult}\n`
+      )
+    }
+
+    console.log('\nFetching your ETH borrow balance from cETH contract...')
+    let balance = await cEthContract.methods.borrowBalanceCurrent(myWalletAddress).call()
+    balance = balance / 1e18 // because DAI is a 1e18 scaled token.
+    console.log(`Borrow balance is ${balance} ETH`)
+
+    console.log(`\nThis part is when you do something with those borrowed assets!\n`)
+  }
+
+  const repayETH = async () => {
+    const repayBorrow = await cEthContract.methods.repayBorrow().send({
+      from: myWalletAddress,
+      gasLimit: web3.utils.toHex(600000),
+      gasPrice: web3.utils.toHex(20000000000), // use ethgasstation.info (mainnet only)
+      value: web3.utils.toWei(amountRepayETH.toString(), 'ether'),
+    })
+
+    if (repayBorrow.events && repayBorrow.events.Failure) {
+      const errorCode = repayBorrow.events.Failure.returnValues.error
+      console.error(`repayBorrow error, code ${errorCode}`)
+      process.exit(1)
+    }
+
+    console.log(`\nBorrow repaid.\n`)
   }
 
   return (
@@ -365,7 +440,7 @@ function App() {
               value={amountRepayERC20}
               onChange={(e) => setAmountRepayERC20(e.target.value)}
             />
-            <button id='eth-redeem-button' onClick={repayBorrow}>
+            <button id='eth-redeem-button' onClick={repayBorrowERC20}>
               Repay
             </button>
           </div>
@@ -384,23 +459,23 @@ function App() {
               id='eth-supply'
               type='text'
               placeholder='ETH'
-              value={amountETH}
-              onChange={(e) => setAmountEth(e.target.value)}
+              value={amountBorrowETH}
+              onChange={(e) => setAmountBorrowETH(e.target.value)}
             />
-            <button id='eth-supply-button' onClick={supplyETH}>
-              Supply
+            <button id='eth-supply-button' onClick={borrowETH}>
+              Borrow
             </button>
           </div>
           <div className='row4'>
             <input
               id='eth-redeem'
               type='text'
-              placeholder='cETH'
-              value={amountRepayERC20}
-              onChange={(e) => amountRepayERC20(e.target.value)}
+              placeholder='ETH'
+              value={amountRepayETH}
+              onChange={(e) => setAmountRepayETH(e.target.value)}
             />
-            <button id='eth-redeem-button' onClick={reedemETH}>
-              Redeem
+            <button id='eth-redeem-button' onClick={repayETH}>
+              Repay
             </button>
           </div>
         </div>
